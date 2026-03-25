@@ -7,7 +7,7 @@ __pycache__/
 test.py
 # C extensions
 *.so
-qwen3*/
+qwen*/
 # Distribution / packaging
 .Python
 build/
