@@ -6,7 +6,7 @@ from typing import Any, Dict, List
 from swift.rewards import ORM, orms
 
 # Use IFbench checkers under this repo.
-IFBENCH_DIR = '/mnt/code/yehangcheng/ms-swift/reward_func/IFbench'
+IFBENCH_DIR = '/mnt/code/yehangcheng/ms-swift/plugin/IFbench'
 if IFBENCH_DIR not in sys.path:
     sys.path.insert(0, IFBENCH_DIR)
 

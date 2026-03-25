@@ -1,17 +1,17 @@
-import json
 import inspect
+import json
+import os
 import sys
 from typing import Any, Dict, List
 
 from swift.rewards import ORM, orms
 
-# Reuse the exact instruction checker implementation from verl recipe.
-# This keeps reward behavior consistent with the original instruct_following pipeline.
-VERL_IF_DIR = '/mnt/code/yehangcheng/verl/recipe/insturct_following'
-if VERL_IF_DIR not in sys.path:
-    sys.path.insert(0, VERL_IF_DIR)
+# Load the vendored IFeval checkers from this plugin directory only.
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+if _THIS_DIR not in sys.path:
+    sys.path.insert(0, _THIS_DIR)
 
-import instructions_registry  # noqa: E402
+import ifeval_instructions_registry as instructions_registry  # noqa: E402
 
 
 def _to_list(value: Any) -> List[Any]:
