@@ -1,8 +1,14 @@
 # Copyright (c) ModelScope Contributors. All rights reserved.
 # GYM Environment and Context Manager implementations for GRPO training.
 
+import os
+import time
+import uuid
 from abc import ABC, abstractmethod
+from functools import lru_cache
 from typing import Any, Dict, List, Tuple
+
+import aiohttp
 
 from swift.infer_engine.protocol import RolloutInferRequest
 from swift.rewards.orm import MathAccuracy
@@ -85,6 +91,18 @@ class Env(ABC):
         pass
 
 
+@lru_cache(maxsize=1)
+def _get_qwen_tokenizer():
+    from modelscope import AutoTokenizer
+
+    model_name = (
+        os.environ.get('SWIFT_GYM_TOKENIZER')
+        or os.environ.get('ROLLOUT_MODEL')
+        or os.environ.get('MODEL_PATH')
+        or 'Qwen/Qwen2.5-3B-Instruct')
+    return AutoTokenizer.from_pretrained(model_name)
+
+
 def count_qwen_tokens(messages: List[Dict[str, Any]], max_tokens: int = 2048) -> Tuple[int, bool]:
     """
     Calculate token count for Qwen messages and check if it exceeds the 16k limit
@@ -97,9 +115,7 @@ def count_qwen_tokens(messages: List[Dict[str, Any]], max_tokens: int = 2048) ->
         Tuple[int, bool]: (token count, whether within limit)
     """
     try:
-        from modelscope import AutoTokenizer
-        model_name = 'Qwen/Qwen2.5-3B-Instruct'
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        tokenizer = _get_qwen_tokenizer()
         text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
         token_count = len(tokenizer.encode(text))
 
@@ -152,5 +168,88 @@ class SimpleMathEnv(Env):
         pass
 
 
+class NeMoGymEnv(Env):
+
+    def __init__(self, env_config):
+        super().__init__(env_config)
+        self.verify_url = os.environ.get('NEMO_GYM_VERIFY_URL')
+        if not self.verify_url:
+            raise ValueError('NEMO_GYM_VERIFY_URL is required when using nemo_gym_env')
+        self.prompt_key = env_config.get('prompt_key', 'prompt')
+        self.reward_key = env_config.get('reward_key', 'reward')
+        self.done_on_verify = env_config.get('done_on_verify', True)
+        self.info_keys = tuple(env_config.get('info_keys', []))
+        self.data_dict: Dict[str, Any] = {}
+        self.responses_create_params: Dict[str, Any] = {}
+        self.request_timeout = float(env_config.get('request_timeout', 120.0))
+
+    async def reset(self, config: RolloutInferRequest) -> Tuple[str, Dict[str, Any], str]:
+        self.data_dict = dict(config.data_dict or {})
+        self.responses_create_params = dict(self.data_dict.get('responses_create_params') or {})
+        observation = self.data_dict.get(self.prompt_key)
+        if observation is None:
+            raise KeyError(
+                f"Prompt key '{self.prompt_key}' not found in data_dict. Available keys: {list(self.data_dict.keys())}")
+        return observation, {}, ''
+
+    def _build_verify_payload(self, action: Messages) -> Dict[str, Any]:
+        assistant_text = action[-1]['content']
+        responses_create_params = self.responses_create_params or {
+            'input': [{'role': 'user', 'content': self.data_dict[self.prompt_key], 'type': 'message'}]
+        }
+
+        payload = {
+            'responses_create_params': responses_create_params,
+            'response': {
+                'id': f'swift-rollout-{uuid.uuid4().hex}',
+                'created_at': time.time(),
+                'model': os.environ.get('ROLLOUT_MODEL') or os.environ.get('MODEL_PATH') or 'swift-rollout',
+                'object': 'response',
+                'output': [{
+                    'id': f'msg-{uuid.uuid4().hex}',
+                    'content': [{'annotations': [], 'text': assistant_text, 'type': 'output_text'}],
+                    'role': 'assistant',
+                    'status': 'completed',
+                    'type': 'message',
+                }],
+                'parallel_tool_calls': False,
+                'tool_choice': 'none',
+                'tools': [],
+            },
+        }
+
+        for key in ('question', 'expected_answer', 'problem', 'solution', 'answer', 'verifier_metadata'):
+            if key in self.data_dict:
+                payload[key] = self.data_dict[key]
+        return payload
+
+    async def step(self, action: Messages) -> Tuple[str, float, bool, Dict[str, Any]]:
+        payload = self._build_verify_payload(action)
+        timeout = aiohttp.ClientTimeout(total=self.request_timeout)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(self.verify_url, json=payload) as resp:
+                if resp.status >= 400:
+                    text = await resp.text()
+                    raise RuntimeError(f'NeMo Gym verify failed: {resp.status}, {text[:1000]}')
+                verify_result = await resp.json()
+
+        reward = float(verify_result.get(self.reward_key, verify_result.get('reward', 0.0)))
+        info = {'nemo_gym_verify_result': verify_result}
+        for key in self.info_keys:
+            if key in verify_result:
+                info[key] = verify_result[key]
+        done = bool(self.done_on_verify)
+        next_obs = ''
+        if count_qwen_tokens(action)[1]:
+            done = True
+            info['stop_reason'] = 'Exceeded maximum length'
+        elif done:
+            info['stop_reason'] = 'Verified'
+        return next_obs, reward, done, info
+
+    async def close(self):
+        pass
+
+
 # Registry for environments
-envs = {'math_env': SimpleMathEnv}
+envs = {'math_env': SimpleMathEnv, 'nemo_gym_env': NeMoGymEnv}
