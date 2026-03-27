@@ -6,7 +6,7 @@ from typing import Any, Dict, List
 from swift.rewards import ORM, orms
 
 # Use IFbench checkers under this repo.
-IFBENCH_DIR = '/mnt/code/yehangcheng/ms-swift/plugin/IFbench'
+IFBENCH_DIR = '/dev/shm/ye/ms-swift/plugin/IFbench'
 if IFBENCH_DIR not in sys.path:
     sys.path.insert(0, IFBENCH_DIR)
 
@@ -28,7 +28,13 @@ def _to_list(value: Any) -> List[Any]:
 
 def _normalize_value(value: Any) -> Any:
     if hasattr(value, 'tolist'):
-        return value.tolist()
+        value = value.tolist()
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, list):
+        return [_normalize_value(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _normalize_value(v) for k, v in value.items()}
     return value
 
 
@@ -84,11 +90,14 @@ class IFbenchStrictORM(ORM):
                 rewards.append(0.0)
                 continue
 
-            try:
-                hits = _strict_hits(completion, instruction_id_list, kwargs_list)
-                rewards.append(1.0 if hits and all(hits) else 0.0)
-            except Exception:
-                rewards.append(0.0)
+            # try:
+            if "<think>\n\n</think>\n\n" in completion:
+                completion = completion.replace("<think>\n\n</think>\n\n", "")
+            print({'completion':completion, 'instruction_id_list':instruction_id_list, 'kwargs_list':kwargs_list})
+            hits = _strict_hits(completion, instruction_id_list, kwargs_list)
+            rewards.append(1.0 if hits and all(hits) else 0.0)
+            # except Exception:
+            #     rewards.append(0.0)
         return rewards
 
 

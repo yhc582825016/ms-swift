@@ -5,7 +5,7 @@ GYM_VERIFY_HOST="${GYM_VERIFY_HOST:-127.0.0.1}"
 GYM_VERIFY_PORT="${GYM_VERIFY_PORT:-18001}"
 POLICY_BASE_URL="${POLICY_BASE_URL:-http://127.0.0.1:8000/v1}"
 POLICY_API_KEY="${POLICY_API_KEY:-EMPTY}"
-POLICY_MODEL_NAME="${POLICY_MODEL_NAME:-Qwen/Qwen3-4B-Instruct-2507}"
+POLICY_MODEL_NAME="${POLICY_MODEL_NAME:-Qwen/Qwen3-4B}"
 cd "${GYM_ROOT}"
 if [[ -f ".venv/bin/activate" ]]; then source .venv/bin/activate; fi
 cat > env.yaml <<EOF
